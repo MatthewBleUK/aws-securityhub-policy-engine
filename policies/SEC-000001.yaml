@@ -1,0 +1,18 @@
+id: SEC-000001
+name: Example exception
+owner: cloud-security
+ticket: SEC-001
+reason: Risk accepted for resources in development
+
+accounts:
+  - "123456789012"
+regions:
+  - eu-central-1
+
+match:
+  control_id: EC2.13
+  tags:
+    Environment: Development
+
+action: SUPPRESS
+expires_at: "2026-12-31T23:59:59Z"

@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "name", "owner", "ticket", "reason", "accounts", "regions", "match", "action", "expires_at"],
+  "properties": {
+    "id": {"type": "string", "pattern": "^SEC-[0-9]{5,}$"},
+    "name": {"type": "string", "minLength": 3},
+    "owner": {"type": "string", "minLength": 2},
+    "ticket": {"type": "string", "minLength": 2},
+    "reason": {"type": "string", "minLength": 8},
+    "accounts": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[0-9]{12}$"}},
+    "regions": {"type": "array", "minItems": 1, "uniqueItems": true, "items": {"type": "string", "pattern": "^[a-z]{2}(?:-[a-z0-9]+)+-[0-9]+$"}},
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "control_id": {"type": "string", "minLength": 1},
+        "resource_id": {"type": "string", "minLength": 1},
+        "resource_pattern": {"type": "string", "minLength": 3},
+        "resource_type": {"type": "string", "minLength": 1},
+        "severity": {"enum": ["INFORMATIONAL", "LOW", "MEDIUM", "HIGH", "CRITICAL"]},
+        "tags": {"type": "object", "minProperties": 1, "additionalProperties": {"type": "string"}}
+      }
+    },
+    "action": {"const": "SUPPRESS"},
+    "expires_at": {"type": "string", "format": "date-time"}
+  }
+}
