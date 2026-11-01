@@ -1,0 +1,14 @@
+.terraform/
+.venv/
+venv/
+infrastructure/processor.zip
+*.tfstate
+*.tfstate.*
+*.tfplan
+backend.hcl
+terraform.tfvars
+__pycache__/
+.pytest_cache/
+*.pyc
+.env
+.DS_Store

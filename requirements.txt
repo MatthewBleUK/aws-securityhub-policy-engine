@@ -1,0 +1,4 @@
+boto3>=1.35,<2
+PyYAML>=6.0,<7
+jsonschema>=4.22,<5
+pytest>=8,<10
