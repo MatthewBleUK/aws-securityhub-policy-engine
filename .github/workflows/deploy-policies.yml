@@ -1,0 +1,54 @@
+
+name: Deploy Policies
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "policies/**"
+      - "schemas/**"
+      - "scripts/policies.py"
+
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: policy-publishing
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Validate, Test & Deploy
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Validate policies
+        run: python scripts/policies.py validate
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6.3.0
+        with:
+          role-to-assume: ${{ vars.AWS_POLICY_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Deploy policies
+        run: python scripts/policies.py deploy
+        env:
+          POLICIES_TABLE: ${{ vars.POLICIES_TABLE }}
+          PROCESSOR_FUNCTION: ${{ vars.PROCESSOR_FUNCTION }}
