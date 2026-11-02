@@ -1,3 +1,10 @@
+"""Validate policy files and deploy them to DynamoDB.
+
+Checks YAML policies against the schema and validates expiry dates.
+Creates or updates policies in DynamoDB and removes policies whose files
+have been deleted. After changes, triggers reconciliation and backfill
+to reassess existing findings using the updated policies.
+"""
 
 import argparse
 import hashlib

@@ -269,6 +269,7 @@ def lambda_handler(event, context):
     failures = []
 
     for record in event.get("Records", []):
+        finding = None
         try:
             event_body = json.loads(record["body"])
 
@@ -289,9 +290,15 @@ def lambda_handler(event, context):
                 process_finding(finding, sh, table)
 
         except Exception:
+            finding_context = finding if isinstance(finding, dict) else {}
             logger.exception(
-                "Failed processing SQS message %s",
+                "Failed processing SQS message %s "
+                "finding_id=%s product_arn=%s finding_region=%s client_region=%s",
                 record.get("messageId"),
+                finding_context.get("Id"),
+                finding_context.get("ProductArn"),
+                finding_context.get("Region"),
+                sh.meta.region_name,
             )
             failures.append({
                 "itemIdentifier": record["messageId"],

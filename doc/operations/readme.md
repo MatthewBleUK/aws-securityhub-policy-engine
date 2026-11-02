@@ -8,10 +8,10 @@ Commands below run from the repository root. They are instructions for you to ru
 
 | Change | How it reaches AWS |
 | --- | --- |
-| Terraform configuration or Python under `src/` | Terraform plan and apply. Terraform packages `src/` into the Lambda ZIP. |
+| Terraform configuration or Python under `src/` | GitHub Actions plans on PRs and applies after merging to `main` and approval. Manual Terraform commands also work. Terraform packages `src/` into the Lambda ZIP. |
 | YAML policies | `scripts/policies.py deploy`, locally or through GitHub Actions. |
 
-The current implementation has no dry-run mode. Test with a policy targeting one intended finding.
+The policy publisher has no dry-run mode. Test with a policy targeting one intended finding.
 
 ## Local setup
 
@@ -110,7 +110,7 @@ aws lambda invoke \
 
 Inspect the CLI response for `FunctionError`, the response file, and CloudWatch logs. Finishing the scan does not mean the queued processing has finished. `Scan mode=reconcile enqueued=0` is normal when no eligible suppressions exist.
 
-## GitHub publishing
+## GitHub deployments
 
 Configure repository Actions variables:
 
@@ -123,9 +123,65 @@ Configure repository Actions variables:
 
 The publishing workflow uses OIDC to obtain temporary AWS credentials. Its role trust is restricted to the configured repository's `main` branch. The optional owner/repository numeric ID variables support repositories using immutable OIDC subject formats; the trust must match the token your repository issues.
 
-Publishing runs on relevant policy/schema/publisher changes pushed to `main`, or through manual workflow dispatch. Use `main` for manual runs to match the role trust. Configure branch protection and required reviews to enforce approval.
+### Which changes deploy?
 
-The validation workflow checks policy validity and Terraform formatting/configuration. Despite the job name, it does not currently run a Python test suite. Neither workflow deploys infrastructure changes.
+Each workflow has one purpose:
+
+- `validate.yml` checks policies and Terraform.
+- `deploy.yml` checks changed files and runs the appropriate deployment workflows.
+- `deploy-terraform.yml` plans Terraform and applies the saved plan after approval.
+- `deploy-policies.yml` validates and publishes policies.
+
+The deployment selection is:
+
+| Change | Pull request | Push/merge to `main` |
+| --- | --- | --- |
+| `infrastructure/**` or `src/**` | Terraform plan | Terraform plan, then approval and apply |
+| `policies/**`, `schemas/**`, `scripts/policies.py`, or `requirements.txt` | Validation in `validate.yml` | Publish policies |
+| Both groups | Plan and validation | Apply Terraform first, then publish policies |
+| Documentation only | Validation | No deployment |
+
+Changes to `deploy.yml` select both deployments. Changes to either deployment workflow select that deployment. `deploy-terraform.yml` and `deploy-policies.yml` are reusable workflows called by `deploy.yml`.
+
+In Actions, run **Deploy** manually on `main` to deploy both, with Terraform first. Other branches cannot deploy. A failed, cancelled, or rejected Terraform apply blocks policy publishing when both were selected. Policy-only runs do not require Terraform approval.
+
+Main deployments are queued together, including while waiting for approval, so newer deployments cannot overtake an older deployment. The workflow uses GitHub's [`queue: max` concurrency option](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) to retain pending runs rather than replace them. If a deployment fails, resolve it and rerun it before approving later infrastructure deployments; use a manual **Deploy** run if the latest complete configuration needs republishing.
+
+`validate.yml` continues to check policy validity and Terraform formatting/configuration on PRs and pushes to `main`. It does not run a Python test suite. Fork PRs run validation but skip the AWS-backed Terraform plan.
+
+### Terraform setup in GitHub
+
+Before enabling infrastructure deployments:
+
+1. Create the **terraform-production** GitHub environment. Restrict deployment branches to `main` and configure **required reviewers**. The YAML references the environment; it does not create an approval rule. Without required reviewers, apply starts automatically. Check that your repository's GitHub plan supports [environment approvals](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
+2. Provision separate AWS OIDC roles for planning and applying. These roles, the OIDC provider, and the state bucket must already exist; the existing policy-publishing role cannot deploy infrastructure. Bootstrap them using your existing AWS administration process.
+3. Configure the repository Actions variables below. Keep the existing policy variables listed above.
+
+| Variable | Value |
+| --- | --- |
+| `AWS_TERRAFORM_PLAN_ROLE_ARN` | Plan role: resource read access, state read access, and S3 lock-file permissions. No infrastructure mutation permissions. |
+| `AWS_TERRAFORM_APPLY_ROLE_ARN` | Apply role: permissions to manage this project's resources, pass its Lambda IAM role, and read/write its Terraform state and lock file. |
+| `TF_STATE_BUCKET` | Existing state bucket, matching your local `backend.hcl`. |
+| `TF_STATE_KEY` | Existing state key, for example `securityhub-policy-engine/terraform.tfstate`. |
+| `TF_STATE_REGION` | State bucket Region. |
+| `TF_VARS_JSON` | Optional JSON object containing Terraform input overrides. Match your existing local inputs; see below. |
+
+The workflow defaults `aws_region` to `AWS_REGION` and `github_repository` to the current repository. Other inputs use their Terraform defaults unless overridden in `TF_VARS_JSON`. For example, if Security Hub is already managed elsewhere:
+
+```json
+{
+  "manage_securityhub": false,
+  "project_name": "securityhub-policy-engine"
+}
+```
+
+Include any nondefault inputs from your local `terraform.tfvars`, including numeric GitHub owner/repository IDs if used. Overrides take precedence over the workflow defaults. The backend must point to the **same existing state**, and the variables must describe the same deployment, before the first automated apply. Keep `POLICIES_TABLE` and `PROCESSOR_FUNCTION` aligned with the Terraform outputs if resource names change.
+
+For repositories using the standard GitHub OIDC subject, the plan role must trust `repo:OWNER/REPOSITORY:pull_request` and `repo:OWNER/REPOSITORY:ref:refs/heads/main`. The apply role must trust `repo:OWNER/REPOSITORY:environment:terraform-production`. Both must require audience `sts.amazonaws.com`. Adapt subjects for immutable/custom OIDC formats if enabled. The policy role keeps its existing `main` branch trust.
+
+AWS-backed planning executes Terraform from same-repository PRs and can read state. Limit that role to planning permissions and only allow trusted contributors to create branches in the repository. Fork PRs never receive planning credentials through this workflow.
+
+Review the **Create Terraform plan** step in the run logs before approving **Terraform apply**. Main runs save the plan together with the Lambda ZIP and apply that exact plan after approval. PR plans are previews; merging creates a new plan for the actual `main` commit. Plan artifacts can contain sensitive values and are retained for one day; approve within that period or rerun the workflow to generate a fresh plan.
 
 ## Common problems
 

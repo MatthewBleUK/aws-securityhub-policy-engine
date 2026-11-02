@@ -1,4 +1,3 @@
-
 name: Deploy Policies
 
 on:
@@ -7,22 +6,21 @@ on:
       - main
     paths:
       - "policies/**"
-      - "schemas/**"
-      - "scripts/policies.py"
-
   workflow_dispatch:
 
 permissions:
-  id-token: write
   contents: read
+  id-token: write
 
 concurrency:
-  group: policy-publishing
+  group: deploy-policies
   cancel-in-progress: false
+  queue: max
 
 jobs:
-  publish:
-    name: Validate, Test & Deploy
+  deploy:
+    name: Deploy Policies
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
 
     steps:
