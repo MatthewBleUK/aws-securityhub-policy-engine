@@ -1,35 +1,26 @@
-
-name: Validate
+name: Validate Terraform
 
 on:
   pull_request:
+    paths:
+      - "infrastructure/**"
   push:
     branches:
       - main
+    paths:
+      - "infrastructure/**"
 
 permissions:
   contents: read
 
 jobs:
   validate:
-    name: Validate & Test
+    name: Validate Terraform
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-          cache: pip
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Validate policies
-        run: python scripts/policies.py validate
 
       - name: Set up Terraform
         uses: hashicorp/setup-terraform@v3
