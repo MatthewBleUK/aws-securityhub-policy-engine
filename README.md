@@ -16,7 +16,7 @@ Policies are managed through Git, require approval before taking effect, and inc
 
 ## How it works
 
-<img src="./doc/image.png" style="max-width: 650px;">
+<img src="./doc/image.png" width="650" alt="Architecture diagram">
 
 Security exceptions are managed as YAML policies and reviewed through GitHub pull requests. Once approved and merged, GitHub Actions automatically deploys the policies to DynamoDB.
 
