@@ -7,6 +7,7 @@ infrastructure/processor.zip
 *.tfplan
 backend.hcl
 terraform.tfvars
+terraform.tfvars.json
 __pycache__/
 .pytest_cache/
 *.pyc
