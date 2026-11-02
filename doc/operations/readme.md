@@ -8,7 +8,7 @@ Commands below run from the repository root. They are instructions for you to ru
 
 | Change | How it reaches AWS |
 | --- | --- |
-| Terraform configuration or Python under `src/` | GitHub Actions plans on PRs and applies after merging to `main` and approval. Manual Terraform commands also work. Terraform packages `src/` into the Lambda ZIP. |
+| Terraform configuration or Python under `src/` | Deploy using Terraform locally or through your own infrastructure pipeline. Terraform packages `src/` into the Lambda ZIP. The supplied GitHub workflows do not deploy infrastructure or Lambda code. |
 | YAML policies | `scripts/policies.py deploy`, locally or through GitHub Actions. |
 
 The policy publisher has no dry-run mode. Test with a policy targeting one intended finding.
@@ -123,65 +123,40 @@ Configure repository Actions variables:
 
 The publishing workflow uses OIDC to obtain temporary AWS credentials. Its role trust is restricted to the configured repository's `main` branch. The optional owner/repository numeric ID variables support repositories using immutable OIDC subject formats; the trust must match the token your repository issues.
 
+### Set up policy publishing
+
+Deploy the infrastructure before running the publishing workflow. The existing GitHub OIDC provider lets GitHub authenticate to AWS, and Terraform creates the policy deployment IAM role. That role can publish policies and invoke the processor; it is not an infrastructure deployment role.
+
+1. Deploy the infrastructure using the Terraform commands above or your own pipeline.
+2. Run `terraform -chdir=infrastructure output` to obtain the role ARN, table name, and processor function name.
+3. In your GitHub repository, open **Settings → Secrets and variables → Actions → Variables** and add the four repository variables listed above. Use the IAM role ARN, not the OIDC provider ARN.
+4. Configure branch protection or repository rules to require reviews before merging policy changes into `main`.
+5. Ensure the workflows and the complete intended policy set are on `main`.
+
+The workflows use temporary AWS credentials through OIDC. They do not need AWS access keys, Terraform state variables, separate Terraform planning/apply roles, or a `terraform-production` GitHub environment.
+
 ### Which changes deploy?
 
-Each workflow has one purpose:
+The repository includes two workflows:
 
-- `validate.yml` checks policies and Terraform.
-- `deploy.yml` checks changed files and runs the appropriate deployment workflows.
-- `deploy-terraform.yml` plans Terraform and applies the saved plan after approval.
-- `deploy-policies.yml` validates and publishes policies.
-
-The deployment selection is:
-
-| Change | Pull request | Push/merge to `main` |
+| Workflow | When it runs | What it does |
 | --- | --- | --- |
-| `infrastructure/**` or `src/**` | Terraform plan | Terraform plan, then approval and apply |
-| `policies/**`, `schemas/**`, `scripts/policies.py`, or `requirements.txt` | Validation in `validate.yml` | Publish policies |
-| Both groups | Plan and validation | Apply Terraform first, then publish policies |
-| Documentation only | Validation | No deployment |
+| `validate-policies.yml` | Pull requests changing `policies/**`, and pushes to `main` changing `policies/**`. | Installs Python dependencies and validates the policy files without contacting AWS. |
+| `deploy-policies.yml` | Pushes to `main` changing `policies/**`, or a manual run on `main`. | Validates policies, assumes the AWS deployment role, and synchronises the policies into DynamoDB. |
 
-Changes to `deploy.yml` select both deployments. Changes to either deployment workflow select that deployment. `deploy-terraform.yml` and `deploy-policies.yml` are reusable workflows called by `deploy.yml`.
+Changes only to schemas, `scripts/policies.py`, dependencies, documentation, or workflow files do not trigger either workflow automatically. Run local validation when changing the schema or publisher. Changes under `infrastructure/` or `src/` require a separate infrastructure deployment.
 
-In Actions, run **Deploy** manually on `main` to deploy both, with Terraform first. Other branches cannot deploy. A failed, cancelled, or rejected Terraform apply blocks policy publishing when both were selected. Policy-only runs do not require Terraform approval.
+The workflows do not run Terraform checks or a Python test suite. Policy deployment validates the files itself; it does not wait for the separate validation workflow to finish.
 
-Main deployments are queued together, including while waiting for approval, so newer deployments cannot overtake an older deployment. The workflow uses GitHub's [`queue: max` concurrency option](https://docs.github.com/en/actions/how-tos/write-workflows/choose-when-workflows-run/control-workflow-concurrency) to retain pending runs rather than replace them. If a deployment fails, resolve it and rerun it before approving later infrastructure deployments; use a manual **Deploy** run if the latest complete configuration needs republishing.
+### Run policy deployment manually
 
-`validate.yml` continues to check policy validity and Terraform formatting/configuration on PRs and pushes to `main`. It does not run a Python test suite. Fork PRs run validation but skip the AWS-backed Terraform plan.
+In GitHub, open **Actions → Deploy Policies → Run workflow**, select **main**, and start the run. The workflow must be present on the default branch for manual dispatch to be available. Runs targeting another branch skip the deployment job, and the IAM trust also restricts authentication to `main`.
 
-### Terraform setup in GitHub
+Review the committed policy files first. Deployment synchronises the complete set, including removing deployed policies whose files are absent. Expired policy files fail validation. The workflow does not pass `--allow-empty`; use the explicit local command when intentionally removing the final policy.
 
-Before enabling infrastructure deployments:
+Policy deployment runs share a concurrency group and are queued rather than cancelling the current run. Infrastructure deployment is separate and is not coordinated by this queue.
 
-1. Create the **terraform-production** GitHub environment. Restrict deployment branches to `main` and configure **required reviewers**. The YAML references the environment; it does not create an approval rule. Without required reviewers, apply starts automatically. Check that your repository's GitHub plan supports [environment approvals](https://docs.github.com/en/actions/how-tos/deploy/configure-and-manage-deployments/manage-environments).
-2. Provision separate AWS OIDC roles for planning and applying. These roles, the OIDC provider, and the state bucket must already exist; the existing policy-publishing role cannot deploy infrastructure. Bootstrap them using your existing AWS administration process.
-3. Configure the repository Actions variables below. Keep the existing policy variables listed above.
-
-| Variable | Value |
-| --- | --- |
-| `AWS_TERRAFORM_PLAN_ROLE_ARN` | Plan role: resource read access, state read access, and S3 lock-file permissions. No infrastructure mutation permissions. |
-| `AWS_TERRAFORM_APPLY_ROLE_ARN` | Apply role: permissions to manage this project's resources, pass its Lambda IAM role, and read/write its Terraform state and lock file. |
-| `TF_STATE_BUCKET` | Existing state bucket, matching your local `backend.hcl`. |
-| `TF_STATE_KEY` | Existing state key, for example `securityhub-policy-engine/terraform.tfstate`. |
-| `TF_STATE_REGION` | State bucket Region. |
-| `TF_VARS_JSON` | Optional JSON object containing Terraform input overrides. Match your existing local inputs; see below. |
-
-The workflow defaults `aws_region` to `AWS_REGION` and `github_repository` to the current repository. Other inputs use their Terraform defaults unless overridden in `TF_VARS_JSON`. For example, if Security Hub is already managed elsewhere:
-
-```json
-{
-  "manage_securityhub": false,
-  "project_name": "securityhub-policy-engine"
-}
-```
-
-Include any nondefault inputs from your local `terraform.tfvars`, including numeric GitHub owner/repository IDs if used. Overrides take precedence over the workflow defaults. The backend must point to the **same existing state**, and the variables must describe the same deployment, before the first automated apply. Keep `POLICIES_TABLE` and `PROCESSOR_FUNCTION` aligned with the Terraform outputs if resource names change.
-
-For repositories using the standard GitHub OIDC subject, the plan role must trust `repo:OWNER/REPOSITORY:pull_request` and `repo:OWNER/REPOSITORY:ref:refs/heads/main`. The apply role must trust `repo:OWNER/REPOSITORY:environment:terraform-production`. Both must require audience `sts.amazonaws.com`. Adapt subjects for immutable/custom OIDC formats if enabled. The policy role keeps its existing `main` branch trust.
-
-AWS-backed planning executes Terraform from same-repository PRs and can read state. Limit that role to planning permissions and only allow trusted contributors to create branches in the repository. Fork PRs never receive planning credentials through this workflow.
-
-Review the **Create Terraform plan** step in the run logs before approving **Terraform apply**. Main runs save the plan together with the Lambda ZIP and apply that exact plan after approval. PR plans are previews; merging creates a new plan for the actual `main` commit. Plan artifacts can contain sensitive values and are retained for one day; approve within that period or rerun the workflow to generate a fresh plan.
+After a successful deployment, changed policies trigger reconciliation and backfill. If the policy contents are unchanged, no scans start; use the manual scan commands above when you need to reassess findings anyway.
 
 ## Common problems
 
@@ -194,6 +169,23 @@ Review the **Create Terraform plan** step in the run logs before approving **Ter
 | Scan succeeds but findings do not change | Inspect processing logs and the SQS dead-letter queue. Scan completion only confirms enqueueing. |
 | GitHub cannot assume the role | Check the repository/branch trust, OIDC provider, role ARN variable, and `id-token: write`. |
 | Expired policy blocks publishing | Remove or update the expired YAML file before publishing the full set. |
+
+### Investigate a failed finding
+
+The processor logs the SQS message ID and these fields when message processing fails:
+
+| Field | Meaning |
+| --- | --- |
+| `finding_id` | The Security Hub finding identifier. |
+| `product_arn` | The product ARN that identifies the finding source. |
+| `finding_region` | The Region recorded on the finding in the message. |
+| `client_region` | The Region used by the processor's Security Hub client. |
+
+Use the finding ID and product ARN together when looking up the finding through `GetFindings`. Check the client Region as well. Fields can be empty when a message fails before a finding is decoded.
+
+`Finding not yet available through Security Hub GetFindings` means the lookup returned no finding. `TooManyRequestsException` means the API request was throttled. Neither error means the finding was successfully processed: the handler reports the failed SQS message for retry.
+
+The queue's visibility timeout is 360 seconds. A failed message becomes available again after that timeout, and repeated failures can send it to the dead-letter queue according to the maximum receive count of 5. The handler catches these errors and returns partial batch failures, so Lambda's invocation error metric can remain at zero even when individual messages fail. Check the processor logs, source queue, and dead-letter queue together.
 
 The engine does not configure AWS Config recording. Security Hub controls may require additional setup before producing findings. Creating infrastructure alone also does not publish policies.
 
