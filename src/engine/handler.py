@@ -13,6 +13,7 @@ import boto3
 from boto3.dynamodb.conditions import Key
 
 from engine.matcher import best_match, control_id
+from engine.expiry_notifications import notify_expiring
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -255,6 +256,14 @@ def lambda_handler(event, context):
     sh = boto3.client("securityhub")
     dynamodb = boto3.resource("dynamodb")
     table = dynamodb.Table(TABLE)
+
+    if event.get("action") == "notify_expiring":
+        return notify_expiring(
+            table,
+            boto3.client("sns"),
+            os.environ.get("EXPIRY_TOPIC_ARN", ""),
+            int(os.environ.get("EXPIRY_WARNING_DAYS", "30")),
+        )
 
     if event.get("action") in ("reconcile", "backfill"):
         scan_findings(

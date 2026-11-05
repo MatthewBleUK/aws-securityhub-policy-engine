@@ -20,11 +20,13 @@ This project addresses those challenges by managing security exceptions as versi
   <img src="./doc/image.png" width="650" alt="Architecture diagram">
 </p>
 
-Security exceptions are defined as YAML policies, with GitHub serving as the source of truth for policy management. Changes are reviewed through pull requests, and once approved and merged, GitHub Actions automatically deploys the policies to DynamoDB.
+Security exceptions are defined as YAML policies and managed in GitHub, which serves as the single source of truth. Changes are reviewed through pull requests, and once approved and merged, GitHub Actions automatically syncs the policies to DynamoDB.
 
-An EventBridge rule captures `Security Hub Findings - Imported` events from AWS Security Hub and forwards them to an SQS queue for processing by a Lambda function. The function evaluates each finding against active policies and automatically suppresses those that match.
+An EventBridge rule captures `Security Hub Findings - Imported` events from AWS Security Hub and forwards them to an SQS queue for processing by a Lambda function. The function evaluates each finding against active policies and automatically suppresses those that match. 
 
-Findings are reevaluated when they are updated or when policies change. A daily scheduled check also reviews findings previously suppressed by the engine to ensure their exceptions are still valid. When a policy expires or no longer applies, affected findings are reopened if no other active policy matches.
+Two daily checks manage policy expiry. The first checks suppressed findings and unsuppresses them if their policy is no longer valid and there's no other active policies.
+
+The second checks for policies approaching expiry and sends an email notification through SNS if a policy is due to expire within 30 days. It then updates the `expiry_notification` field in DynamoDB to prevent duplicate notifications.
 
 ## Example policy
 

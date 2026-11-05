@@ -127,3 +127,22 @@ resource "aws_iam_role_policy" "github_policy_deploy" {
   role   = aws_iam_role.github_policy_deploy.id
   policy = data.aws_iam_policy_document.github_policy_deploy.json
 }
+
+data "aws_iam_policy_document" "expiry" {
+  count = var.expiry_notification_email != "" ? 1 : 0
+  statement {
+    actions   = ["dynamodb:Scan", "dynamodb:UpdateItem"]
+    resources = [aws_dynamodb_table.policies.arn]
+  }
+  statement {
+    actions   = ["sns:Publish", "sns:ListSubscriptionsByTopic"]
+    resources = [aws_sns_topic.expiry[0].arn]
+  }
+}
+
+resource "aws_iam_role_policy" "expiry" {
+  count  = var.expiry_notification_email != "" ? 1 : 0
+  name   = "${var.project_name}-expiry-notifications"
+  role   = aws_iam_role.lambda.id
+  policy = data.aws_iam_policy_document.expiry[0].json
+}
