@@ -1,0 +1,9 @@
+aws_region   = "eu-central-1"
+project_name = "securityhub-policy-engine"
+github_repository = "YOUR_ORG/YOUR_REPOSITORY"
+github_owner_id = ""
+github_repo_id  = ""
+manage_securityhub = true
+enable_default_standards = true
+expiry_notification_email = "example@example.com"
+expiry_warning_days       = 30

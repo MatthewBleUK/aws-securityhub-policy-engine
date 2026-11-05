@@ -77,3 +77,8 @@ The matcher reads tags and Regions from the finding's resources. It does not cal
 ## Errors
 
 If a finding cannot be fetched or updated, the handler records the failure against its SQS message. A message containing several findings can be retried even if some were processed successfully. Unknown message shapes are skipped by the current handler.
+
+
+## Expiry notification action
+
+`expiry_notifications.py` handles the `notify_expiring` action in the existing Lambda. It scans deployed policies, groups their account records, and publishes one SNS email for each unnotified policy expiring within the configured warning window. The boolean `expiry_notification` records success; temporary claim fields coordinate overlapping runs. The publisher preserves this metadata and resets the flag when expiry changes. See the [operations guide](../operations/readme.md#optional-policy-expiry-reminders) for setup, testing, and delivery limitations.

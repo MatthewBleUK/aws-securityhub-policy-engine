@@ -31,6 +31,14 @@ Check the returned account before continuing. Credentials belong in your AWS pro
 
 ## Infrastructure configuration
 
+Start with the [example Terraform variables](../../infrastructure/terraform.tfvars.example). From the repository root, copy it only if you do not already have a local configuration:
+
+```bash
+cp -n infrastructure/terraform.tfvars.example infrastructure/terraform.tfvars
+```
+
+Edit the local copy with your deployment settings. If you already have `terraform.tfvars`, use the example as a reference rather than replacing it.
+
 Set your Region and actual GitHub `OWNER/REPOSITORY` in `infrastructure/terraform.tfvars`. The GitHub OIDC provider must already exist in IAM; this project creates its deployment role, not the provider.
 
 If Security Hub is already enabled and managed elsewhere, set `manage_securityhub = false` before first deployment. This flag does not disable an existing Security Hub subscription. Do not flip it casually after this project has created the subscription: the configuration includes `prevent_destroy`.
@@ -190,3 +198,39 @@ The queue's visibility timeout is 360 seconds. A failed message becomes availabl
 The engine does not configure AWS Config recording. Security Hub controls may require additional setup before producing findings. Creating infrastructure alone also does not publish policies.
 
 AWS resources can incur ongoing usage charges. Review billing while testing. Avoid treating `terraform destroy` as a complete undo: Security Hub has destruction protection, and destroying the engine would not reopen findings it already suppressed.
+
+
+## Optional policy expiry reminders
+
+The existing processor Lambda can send one SNS email per policy as it enters its final 30 days. A separate daily schedule invokes `{"action":"notify_expiring"}`; the reconciliation schedule continues to check existing suppressions independently.
+
+Enable reminders in your local Terraform variables:
+
+```hcl
+expiry_notification_email = "security-team@example.com"
+expiry_warning_days       = 30
+```
+
+Review and apply a Terraform plan using your normal infrastructure deployment process. SNS sends a subscription confirmation email to the recipient. Follow its confirmation link before testing reminders. The function refuses to send or mark reminders as notified until the topic has a confirmed email subscription. Leaving `expiry_notification_email` empty disables the notification schedule and SNS resources.
+
+To test the check manually after confirming the subscription:
+
+```bash
+aws lambda invoke \
+  --function-name "$PROCESSOR_FUNCTION" \
+  --cli-binary-format raw-in-base64-out \
+  --payload '{"action":"notify_expiring"}' \
+  /tmp/shpe-expiry-notifications.json
+```
+
+This sends real emails for eligible policies. Inspect the response file for errors and the processor logs for `Expiry reminder published policy=...`. Running it again should report zero sent reminders unless another policy becomes eligible.
+
+The check scans the deployed policy table with pagination. It groups account records by policy ID and sends one email per policy, including all accounts, rather than one email per account or finding. It checks policies even if they currently suppress no findings. Already-expired policies are excluded.
+
+The application stores `expiry_notification` as a boolean on each policy record. Missing flags are treated as false. Publishing preserves the flag for other edits and account changes, but resets it when the expiry changes. These fields are not YAML inputs and do not affect the policy content hash. Deploy the updated publisher as well as the Lambda; an older publisher would discard the notification metadata when replacing a record.
+
+A temporary five-minute claim on one account record prevents overlapping reminder runs from sending the same policy simultaneously. Publishing refuses to overwrite an active claim; retry publication after five minutes if needed. If only some account records were marked successfully, a later check repairs the remaining flags without resending. Avoid running publication and manual notification checks simultaneously: table scans and multi-account publication are not atomic snapshots.
+
+There is no additional SQS queue or notification table. SNS handles email delivery retries after accepting a publish. Failed Lambda checks appear in its error logs; a later daily run retries eligible policies after a claim expires. A publish accepted by SNS followed by failure before any success flag is saved can still produce a duplicate reminder. Acceptance by SNS does not prove inbox delivery or that the email was read. Deleting and recreating a policy removes its notification history.
+
+The scan groups all deployed policies in memory and shares the processor's 60-second timeout. Monitor duration and errors as the policy set grows; very large sets may require a separate continuation design. These reminders do not call Security Hub or change finding workflow statuses.
