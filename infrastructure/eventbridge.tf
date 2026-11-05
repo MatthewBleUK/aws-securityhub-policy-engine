@@ -34,3 +34,20 @@ resource "aws_scheduler_schedule" "reconcile" {
 
   depends_on = [aws_iam_role_policy.scheduler]
 }
+
+resource "aws_scheduler_schedule" "expiry" {
+  count               = var.expiry_notification_email != "" ? 1 : 0
+  name                = "${var.project_name}-daily-expiry-notifications"
+  group_name          = aws_scheduler_schedule_group.reconcile.name
+  schedule_expression = "rate(1 day)"
+
+  flexible_time_window {
+    mode = "OFF"
+  }
+  target {
+    arn      = aws_lambda_function.processor.arn
+    role_arn = aws_iam_role.scheduler.arn
+    input    = jsonencode({ action = "notify_expiring" })
+  }
+  depends_on = [aws_iam_role_policy.scheduler, aws_iam_role_policy.expiry]
+}

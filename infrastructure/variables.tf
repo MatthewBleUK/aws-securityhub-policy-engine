@@ -34,3 +34,19 @@ variable "github_repo_id" {
   default     = ""
   description = "Numeric GitHub repository ID, required for repositories using immutable OIDC subjects"
 }
+
+variable "expiry_notification_email" {
+  type        = string
+  default     = ""
+  description = "Email address for expiry reminders. Leave empty to disable notifications. The recipient must confirm the SNS subscription."
+}
+
+variable "expiry_warning_days" {
+  type        = number
+  default     = 30
+  description = "Send one reminder when a policy enters this many days before expiry."
+  validation {
+    condition     = var.expiry_warning_days >= 1 && floor(var.expiry_warning_days) == var.expiry_warning_days
+    error_message = "The reminder window must be a positive whole number of days."
+  }
+}

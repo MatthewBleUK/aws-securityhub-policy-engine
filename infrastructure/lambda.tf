@@ -21,8 +21,10 @@ resource "aws_lambda_function" "processor" {
 
   environment {
     variables = {
-      POLICIES_TABLE = aws_dynamodb_table.policies.name
-      QUEUE_URL      = aws_sqs_queue.findings.url
+      POLICIES_TABLE      = aws_dynamodb_table.policies.name
+      QUEUE_URL           = aws_sqs_queue.findings.url
+      EXPIRY_TOPIC_ARN    = var.expiry_notification_email != "" ? aws_sns_topic.expiry[0].arn : ""
+      EXPIRY_WARNING_DAYS = tostring(var.expiry_warning_days)
     }
   }
 
