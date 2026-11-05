@@ -77,7 +77,7 @@ def records_for(policies, commit):
 
 def scan_all(table):
     items = []
-    args = {}
+    args = {"ConsistentRead": True}
 
     while True:
         result = table.scan(**args)
@@ -90,6 +90,20 @@ def scan_all(table):
 
     return {(item["PK"], item["SK"]): item for item in items}
 
+def unchanged_record(record, now):
+    """Do not overwrite a reminder sent or claimed since the publisher read it."""
+    condition = (
+        "#hash = :expected AND "
+        "(attribute_not_exists(expiry_notification_lock_until) OR expiry_notification_lock_until < :now)"
+    )
+    values = {":expected": record["policy_hash"], ":now": now}
+    if "expiry_notification" in record:
+        condition += " AND expiry_notification = :notified"
+        values[":notified"] = record["expiry_notification"]
+    else:
+        condition += " AND attribute_not_exists(expiry_notification)"
+    return condition, {"#hash": "policy_hash"}, values
+
 def sync(table, desired, allow_empty=False):
     existing = scan_all(table)
 
@@ -97,6 +111,16 @@ def sync(table, desired, allow_empty=False):
         raise ValueError(
             "Refusing to remove all deployed policies without --allow-empty"
         )
+
+    # Notification state is shared by all account copies of a policy.
+    notified = {
+        (item["id"], item["expires_at"])
+        for item in existing.values()
+        if item.get("expiry_notification", False)
+    }
+    now = int(datetime.now(timezone.utc).timestamp())
+    if any(item.get("expiry_notification_lock_until", 0) >= now for item in existing.values()):
+        raise ValueError("An expiry reminder is in progress; retry publication in five minutes")
 
     changed = 0
     removed = 0
@@ -107,13 +131,12 @@ def sync(table, desired, allow_empty=False):
         if old and old.get("policy_hash") == item["policy_hash"]:
             continue
 
+        item["expiry_notification"] = (item["id"], item["expires_at"]) in notified
         item["version"] = int(old.get("version", 0)) + 1 if old else 1
         item["deployed_at"] = datetime.now(timezone.utc).isoformat()
 
         if old:
-            condition = "#hash = :expected"
-            names = {"#hash": "policy_hash"}
-            values = {":expected": old["policy_hash"]}
+            condition, names, values = unchanged_record(old, now)
         else:
             condition = "attribute_not_exists(PK) AND attribute_not_exists(SK)"
             names = None
@@ -134,11 +157,12 @@ def sync(table, desired, allow_empty=False):
 
     for key, old in existing.items():
         if key not in desired:
+            condition, names, values = unchanged_record(old, now)
             table.delete_item(
                 Key={"PK": key[0], "SK": key[1]},
-                ConditionExpression="#hash = :expected",
-                ExpressionAttributeNames={"#hash": "policy_hash"},
-                ExpressionAttributeValues={":expected": old["policy_hash"]},
+                ConditionExpression=condition,
+                ExpressionAttributeNames=names,
+                ExpressionAttributeValues=values,
             )
 
             print(f"REMOVE {key[1]} {key[0]}")
